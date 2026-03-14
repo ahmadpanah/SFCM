@@ -1,0 +1,69 @@
+# configs/sfcm_default.yaml
+# =========================
+# SFCM default hyperparameters.
+# Authoritative source: Appendix C Table C1 of the paper.
+# All values here supersede any values mentioned in the main text
+# (drafting discrepancies were corrected in the revision).
+#
+# These values are loaded by sfcm/core.py at runtime.
+# To reproduce any experiment exactly, use this file unchanged.
+
+sfcm:
+  # Population sizes
+  N: 30          # solution population size   (§4.4)
+  M: 10          # surrogate population size  (§4.4)
+
+  # Resource allocation  — Eq.(4)
+  alpha: 2.0     # trust-score sensitivity α
+  tau0:  0.3     # initial adaptive trust threshold τ₀  [CORRECTED from §4.4 draft]
+  eps:   1.0e-8  # numerical stability constant ε
+
+  # Noise-aware selection  — Eq.(6–7)
+  kappa:  1.5    # UCB exploration coefficient κ  [CORRECTED from §4.4 draft]
+  delta0: 0.1    # initial robust-replacement tolerance δ₀
+
+  # Misprediction-guided exploration  — Eq.(8–9)
+  beta: 0.8      # amplification factor β  [CORRECTED from §4.4 draft]
+  # Kernel bandwidth h is set adaptively in code:
+  #   h = 0.1 × median{||xi − xj||} for xi,xj ∈ Dt   (Appendix B Eq.(B3))
+
+  # Surrogate meta-fitness  — Eq.(13)
+  lam: 0.7       # mixing coefficient λ
+
+  # Initialisation
+  n0_factor: 5   # initial archive size n₀ = n0_factor × d   (§4.4)
+
+  # Retraining schedule  (§4.4)
+  K_retrain: 10  # retrain every K generations
+  K_new:      5  # or after K_new new true evaluations, whichever comes first
+
+surrogate:
+  architecture:
+    hidden: [128, 64, 32]   # MLP hidden-layer widths  (Appendix B.1)
+    dropout: 0.1            # dropout rate
+    n_members: 5            # ensemble size
+  training:
+    lr:        1.0e-3       # Adam learning rate  (§4.4 / Appendix B.1)
+    loss:      mse          # MSELoss
+    patience:  20           # early-stopping patience (epochs)
+    val_split: 0.20         # held-out validation fraction
+
+surrogate_population:
+  # DE/rand/1/bin variation in Θ-space  (Section 3.2)
+  de_F:  0.8    # scale factor
+  de_CR: 0.9    # crossover rate
+
+budgets:
+  synthetic:
+    d10:  10000
+    d30:  30000
+    d50:  50000
+  real_world:
+    P1_ResNet18_HPO:       100
+    P2_TrussDesign:        500
+    P3_ContainerPlacement: 1000
+
+experiments:
+  n_runs:    30     # independent runs R
+  alpha_stat: 0.05  # Wilcoxon significance level
+  seed_base:   0    # run r uses seed = seed_base + r

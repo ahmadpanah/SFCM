@@ -1,0 +1,29 @@
+# requirements.txt
+# ================
+# See docker/Dockerfile for the complete environment spec.
+#
+# Install:  pip install -r requirements.txt
+# GPU note: replace torch/torchvision with +cu121 variants for CUDA 12.1
+
+# Core framework
+torch==2.2.0
+torchvision==0.17.0
+gpytorch==1.11
+
+# Scientific computing
+numpy==1.26.4
+scipy==1.12.0
+scikit-learn==1.4.0
+
+# Data / plotting
+pandas==2.2.0
+matplotlib==3.8.2
+pyyaml==6.0.1
+
+# Optional BO baselines (non-fatal if absent; baselines degrade gracefully)
+smac==2.0.2
+cma==3.3.0
+
+# Testing
+pytest==8.0.0
+pytest-cov==4.1.0

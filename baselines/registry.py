@@ -415,9 +415,12 @@ class SMAC3Optimizer(BaseOptimizer):
             from smac import HyperparameterOptimizationFacade, Scenario
             from ConfigSpace import ConfigurationSpace, Float
         except ImportError:
-            # Fall back to GP-EI if SMAC not installed
-            print("[SMAC3] smac not installed — falling back to GP-EI")
-            return GP_EI(self.bounds, self.B, int(self.rng.integers(1000))).run(objective)
+            # Do NOT silently substitute another algorithm's results under the
+            # name "SMAC3" — published tables require the real SMAC3 baseline.
+            raise ImportError(
+                "SMAC3 baseline requires 'pip install smac' (brings ConfigSpace). "
+                "Refusing to substitute GP-EI results under the name 'SMAC3'."
+            )
 
         cs = ConfigurationSpace()
         for j in range(self.d):

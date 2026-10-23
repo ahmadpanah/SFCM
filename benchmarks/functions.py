@@ -5,10 +5,35 @@ All 12 synthetic benchmark functions used in the paper (§4.2.1).
 
 Unimodal   : Sphere, Rosenbrock, Schwefel_2_2
 Multimodal : Rastrigin, Griewank, Ackley, Schwefel, Levy, Michalewicz
-CEC-hybrid : CEC_F1, CEC_F2, CEC_F3  (rotated/shifted composites, CEC 2017 style)
+CEC        : CEC_F1, CEC_F2, CEC_F3
 
 Each function is callable:  f(x) -> float,  domain [-bound, bound]^d
 All are to be MINIMISED.  Global optimum f* = 0 unless noted.
+
+CEC provenance (important — see benchmarks/cec2017/VENDORED.md)
+---------------------------------------------------------------
+The paper (§4.2.1) cites "shifted/rotated hybrid and composite functions from the
+CEC 2017 suite (F1: Hybrid Function 1, F2: Hybrid Function 2, F3: Composition
+Function 1, reported in shifted error form f(x) − f*)".  In the official CEC 2017
+numbering (Awad et al. 2016), Hybrid Function 1 = **f11**, Hybrid Function 2 = **f12**
+and Composition Function 1 = **f21** (f1–f3 in that suite are unimodal, so the
+paper's "CEC 2017" labels map to f11/f12/f21 and are reported here as the
+manuscript names CEC_F1/CEC_F2/CEC_F3 for table compatibility).
+
+get_benchmark_suite(d) uses by default the **official CEC 2017 implementation**
+(vendored NumPy port benchmarks/cec2017, adapted from Awad's original C code, with
+the official shift/rotation/shuffle data).  Values returned are the *official*
+function values; BenchmarkFunction.optimum carries the known global minimum
+(f11* = 1100, f12* = 1200, f21* = 2100), so downstream code subtracting the
+optimum reports the manuscript's shifted-error form f(x) − f*.
+
+The earlier hand-written "CEC-2017-style" mixes in this file are retained ONLY as
+evidence of the original simplified versions; they are clearly suffixed
+" (simplified)" and are served by get_simplified_cec_suite(d).  They must NOT be
+used for results claimed to follow the CEC 2017 suite.
+
+Supported official dimensionality: f11/f12 support D ∈ {10, 30, 50, 100} and f21
+supports D ∈ {10, 30, 50}; the paper uses d ∈ {10, 30, 50} — all supported.
 """
 
 from __future__ import annotations
@@ -102,6 +127,52 @@ def michalewicz(x: np.ndarray) -> float:
 
 
 # ---------------------------------------------------------------------------
+# Official CEC 2017 functions (vendored NumPy port — see VENDORED.md)
+# ---------------------------------------------------------------------------
+
+class _OfficialCEC2017:
+    """
+    Wrapper around the official CEC 2017 function of a given number, evaluated
+    for a single decision vector and returned as a plain float.
+
+    Returns the RAW official value f(x) (minimum f* at the shifted optimum);
+    BenchmarkFunction.optimum carries f* so that reporting code obtains the
+    shifted-error form f(x) − f* used in the manuscript.
+    """
+
+    def __init__(self, fn_number: int, f_star: float):
+        """fn_number: 1-indexed official CEC 2017 function (11, 12, 21, ...)."""
+        self.fn_number = fn_number
+        self.f_star = f_star
+        self._official = _CEC2017_FNS[fn_number]
+
+    def __call__(self, x: np.ndarray) -> float:
+        x_arr = np.atleast_2d(np.asarray(x, dtype=float))
+        return float(self._official(x_arr)[0])
+
+
+# Locate the vendored package. It lives at benchmarks/cec2017, but the repo may
+# also be used with a pip-installed cec2017; prefer the vendored copy.
+def _load_official_cec_functions() -> dict:
+    """Import {11: f11, 12: f12, 21: f21} from the vendored implementation."""
+    try:
+        from .cec2017 import hybrid as _hybrid, composition as _composition  # vendored
+    except ImportError:            # pragma: no cover - fallback
+        from cec2017 import hybrid as _hybrid, composition as _composition  # pip pkg
+    return {11: _hybrid.f11, 12: _hybrid.f12, 21: _composition.f21}
+
+
+_CEC2017_FNS = _load_official_cec_functions()
+
+# Manuscript-name -> official CEC 2017 mapping (see module docstring)
+CEC2017_MAPPING = {
+    "CEC_F1": dict(fn_number=11, label="CEC 2017 F11 (Hybrid Function 1)", f_star=1100.0),
+    "CEC_F2": dict(fn_number=12, label="CEC 2017 F12 (Hybrid Function 2)", f_star=1200.0),
+    "CEC_F3": dict(fn_number=21, label="CEC 2017 F21 (Composition Function 1)", f_star=2100.0),
+}
+
+
+# ---------------------------------------------------------------------------
 # CEC-2017-style hybrid / composite (simplified reproducible versions)
 # ---------------------------------------------------------------------------
 
@@ -192,14 +263,37 @@ class _CEC_F3:
 # Registry
 # ---------------------------------------------------------------------------
 
-def get_benchmark_suite(d: int) -> list[BenchmarkFunction]:
+def get_benchmark_suite(
+    d: int,
+    use_official_cec: bool = True,
+) -> list[BenchmarkFunction]:
     """
     Return all 12 benchmark functions configured for dimension d.
-    Budgets are set externally (see configs/experiments.yaml).
+    Budgets are set externally (see configs/sfcm_default.yaml).
+
+    use_official_cec=True  → the paper-experiment default: the official CEC 2017
+                             functions f11/f12/f21 via the vendored port
+                             (benchmarks/cec2017 — official shift/rotation data).
+    use_official_cec=False → the three historical hand-written "CEC-2017-style"
+                             mixes (names suffixed " (simplified)"); kept only for
+                             backward-reference and must not be cited as CEC 2017.
     """
-    cec_f1 = _CEC_F1(d)
-    cec_f2 = _CEC_F2(d)
-    cec_f3 = _CEC_F3(d)
+    if use_official_cec:
+        cec_entries = []
+        for name, spec in CEC2017_MAPPING.items():
+            wrapper = _OfficialCEC2017(spec["fn_number"], spec["f_star"])
+            # search range for f11/f12/f21 is [-100, 100]^D (Awad et al. 2016)
+            cec_entries.append(BenchmarkFunction(name, wrapper, bounds=100.0,
+                                                 optimum=spec["f_star"]))
+    else:
+        cec_f1 = _CEC_F1(d)
+        cec_f2 = _CEC_F2(d)
+        cec_f3 = _CEC_F3(d)
+        cec_entries = [
+            BenchmarkFunction("CEC_F1 (simplified)", cec_f1, bounds=100.0, optimum=0.0),
+            BenchmarkFunction("CEC_F2 (simplified)", cec_f2, bounds=32.768, optimum=0.0),
+            BenchmarkFunction("CEC_F3 (simplified)", cec_f3, bounds=100.0, optimum=0.0),
+        ]
 
     return [
         # Unimodal
@@ -213,8 +307,17 @@ def get_benchmark_suite(d: int) -> list[BenchmarkFunction]:
         BenchmarkFunction("Schwefel",     schwefel,     bounds=500.0,  optimum=0.0),
         BenchmarkFunction("Levy",         levy,         bounds=10.0,   optimum=0.0),
         BenchmarkFunction("Michalewicz",  michalewicz,  bounds=np.pi,  optimum=-9.66 if d == 10 else -d * 0.966),
-        # CEC-2017 hybrid/composite
-        BenchmarkFunction("CEC_F1",       cec_f1,       bounds=100.0,  optimum=0.0),
-        BenchmarkFunction("CEC_F2",       cec_f2,       bounds=32.768, optimum=0.0),
-        BenchmarkFunction("CEC_F3",       cec_f3,       bounds=100.0,  optimum=0.0),
+        # CEC 2017 hybrid/composite (official or historical simplified versions)
+        *cec_entries,
     ]
+
+
+def get_simplified_cec_suite(d: int) -> list[BenchmarkFunction]:
+    """
+    Return only the three historical hand-written "CEC-2017-style" mixes with
+    explicit " (simplified)" name suffixes. These are NOT the official CEC 2017
+    functions and any results from them must never be cited as official CEC 2017
+    results. Provided for transparency about the original repository state.
+    """
+    return [f for f in get_benchmark_suite(d, use_official_cec=False)
+            if f.name.endswith(" (simplified)")]

@@ -15,6 +15,16 @@ Official implementation of the paper:
 
 This repository contains **complete source code, Docker containers, and hyperparameter configuration files** to reproduce every table and figure in the paper. All hyperparameter values match **Appendix C Table C1** (the authoritative source). See [Hyperparameter Notes](#hyperparameter-notes) below for the corrections applied in the revised manuscript.
 
+**CEC 2017 provenance (fidelity audit v2):** the three `CEC_F*` benchmarks now use the
+**official CEC 2017 functions f11 (Hybrid Function 1), f12 (Hybrid Function 2) and
+f21 (Composition Function 1)** via the vendored NumPy port `benchmarks/cec2017`
+(MIT © Duncan Tilley), which is adapted from Awad's original C implementation and
+uses the **official shift/rotation/shuffle data**. Earlier hand-written "CEC-2017-style"
+mixes remain only as `get_simplified_cec_suite()` and are explicitly labelled
+"(simplified)" — they must never be cited as CEC 2017 results. See
+[benchmarks/cec2017/VENDORED.md](benchmarks/cec2017/VENDORED.md) and the audit
+report [docs/REPRODUCIBILITY_AUDIT.md](docs/REPRODUCIBILITY_AUDIT.md).
+
 ---
 
 ## Repository Structure
@@ -28,6 +38,9 @@ sfcm/
 │   └── __init__.py
 │
 ├── benchmarks/
+│   ├── cec2017/             # ⬅ OFFICIAL CEC 2017 NumPy port + official data
+│   │   ├── VENDORED.md      #   provenance & license (MIT, cec2017-py)
+│   │   └── data.pkl         #   official shift/rotation/shuffle matrices
 │   └── functions.py         # All 12 synthetic functions (§4.2.1)
 │
 ├── problems/
@@ -38,7 +51,8 @@ sfcm/
 │                            #   GP-EI, SMAC3, CMA-ES (§4.3)
 │
 ├── experiments/
-│   └── run_experiments.py   # Reproduces Tables 2–5 and Figs 2–7
+│   └── run_experiments.py   # Reproduces Tables 2–5 and Figs 2–7;
+│                            #   writes RAW per-run JSONL logs to results/raw/
 │
 ├── scripts/
 │   └── plot_figures.py      # Figure generation from saved CSV results
@@ -94,19 +108,27 @@ print(f"Best value: {best_y:.6f}")
 ### 4. Reproduce all paper results
 
 ```bash
-# Full 30-run experiment (requires GPU for P1; use --simulate for CPU)
-python experiments/run_experiments.py --all --n_runs 30 --simulate
+# Full 30-run experiment (P1 uses REAL ResNet-18/CIFAR-10 training — GPU required)
+python experiments/run_experiments.py --all --n_runs 30
 
 # Individual components
 python experiments/run_experiments.py --bench Rastrigin --d 10 30 50 --n_runs 30
 python experiments/run_experiments.py --ablation --d 30 --n_runs 30
+# WARNING: only if you accept a POLYNOMIAL PROXY (NOT the paper's P1 experiment)
 python experiments/run_experiments.py --realworld --simulate
 
 # Generate all figures from results
 python scripts/plot_figures.py --demo
 ```
 
-Results are saved to `results/tables/` (CSV) and `results/figures/` (PDF).
+Results are saved to `results/tables/` (CSV), `results/figures/` (PDF), and — critically — per-run raw logs in `results/raw/` (one JSON line per run: best value, full convergence history, seed, wall clock, hyperparameters).
+
+> **⚠ IMPORTANT — P1 (ResNet-18 HPO):** the real experiment of the manuscript trains a
+> real ResNet-18 on CIFAR-10 (`simulate=False`, CUDA required, each evaluation ≈ minutes).
+> The `--simulate` flag evaluates the **polynomial proxy** in `problems/real_world.py` —
+> a synthetic test stand-in for CI/unit tests only. Any result produced with
+> `--simulate` is NOT a reproduction of the paper's P1 experiments and must never be
+> reported as such; label it `P1-polynomial-proxy`.
 
 ### 5. Docker (exact environment)
 
@@ -172,7 +194,7 @@ At each generation:
 | Problem | d | Variables | Objective | Budget |
 |---------|---|-----------|-----------|--------|
 | P1 ResNet-18 HPO | 8 | lr, weight_decay, batch_size, dropout, momentum, epochs, scheduler_step, γ | 1 − val_accuracy (CIFAR-10) | 100 |
-| P2 10-Bar Truss | 10 | Cross-sectional areas Aᵢ ∈ [0.1, 35.0] cm² | Total weight (kN), s.t. stress ≤25 kN/cm², disp ≤2 cm | 500 |
+| P2 10-Bar Truss | 10 | Cross-sectional areas Aᵢ ∈ [0.1, 35.0] in² (canonical benchmark range) | Total weight (kg), SI-consistent FEM: E = 68.95 GPa, ρ = 2767.99 kg/m³, load 444.82 kN, s.t. stress ≤ 172.37 MPa (25 ksi), disp ≤ 50.8 mm (2 in) | 500 |
 | P3 Container Placement | 15 | Integer node assignments ∈ {0,…,29}^15 | Mean RTT latency (ms), s.t. CPU ≤80%, MEM ≤90%, hops ≤2 | 1000 |
 
 Full formal definitions: `problems/real_world.py`

@@ -1,0 +1,8 @@
+algorithm,wins,losses,ties,cliff_delta
+HHO,0,0,1,1.0
+MPA,0,0,1,-1.0
+SMA,0,0,1,1.0
+CMA-ES,0,0,1,-1.0
+SA-DE,0,0,1,1.0
+GP-EI,0,0,1,-1.0
+SMAC3,0,0,1,-1.0

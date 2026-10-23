@@ -15,8 +15,13 @@ Each problem exposes:
 
 Notes
 -----
-P1 requires PyTorch + torchvision.  To avoid GPU dependency during unit
-tests, a lightweight surrogate simulator is provided (simulate=True).
+P1 requires PyTorch + torchvision (CUDA recommended).  To avoid a GPU
+dependency during unit tests / CI, a light-weight POLYNOMIAL PROXY
+(simulate=True) is provided.  **The polynomial proxy is a synthetic test
+stand-in — it must never be used to produce, check or reproduce the P1 results
+claimed in the manuscript (§4.2.2 / Table 3), which were obtained from
+real ResNet-18 training (`simulate=False`, CIFAR-10, GPU).**  Any result
+computed with simulate=True must be reported as "P1-polynomial-proxy".
 
 P2 uses a pure-Python finite-element solver; no external dependency.
 
@@ -57,6 +62,10 @@ P1_BOUNDS = np.array([
 P1_BATCH_SIZES = [32, 64, 128, 256]
 P1_BUDGET = 100
 
+# Label that any simulate=True result must carry — it is NOT the manuscript's
+# ResNet-18/CIFAR-10 experiment (see ResNet18HPO docstring).
+P1_PROXY_LABEL = "P1-polynomial-proxy"
+
 
 class ResNet18HPO:
     """
@@ -65,8 +74,13 @@ class ResNet18HPO:
     Parameters
     ----------
     simulate : bool
-        If True, uses a fast polynomial surrogate instead of real training.
-        Set simulate=False for actual GPU experiments.
+        If True, evaluates a fast POLYNOMIAL PROXY (synthetic test
+        stand-in for CI / unit tests only — NOT a reproduction of the
+        manuscript's P1 experiments, and never citable as such; label any
+        such results "P1-polynomial-proxy").
+        Set simulate=False for the actual experiment of the manuscript,
+        which trains a real ResNet-18 on CIFAR-10 (requires CUDA); that real
+        evaluator (``_train_real``) is the one defined in the manuscript §4.2.2.
     data_dir : str
         Path to CIFAR-10 data root (only used when simulate=False).
     device : str
@@ -124,10 +138,15 @@ class ResNet18HPO:
     @staticmethod
     def _simulate(hp: dict) -> float:
         """
-        Lightweight polynomial surrogate for CI / unit testing.
-        Mimics the rough accuracy landscape without GPU.
-        Best acc ≈ 93.5% at known-good hyperparameters.
-        Returns 1 - accuracy (minimisation).
+        ⚠️  POLYNOMIAL PROXY — synthetic test simulation, NOT real training.
+
+        This is a hand-crafted quadratic response surface used only for unit
+        tests / CI.  It mimics the rough shape of an accuracy landscape,
+        best proxy accuracy ≈ 93.5% at known-good hyperparameters, and its
+        noise term is drawn from the ambient RNG (unseeded).  Results from
+        this method are NOT the manuscript's ResNet-18/CIFAR-10 experiments
+        and must be labelled "P1-polynomial-proxy" if they are ever reported.
+        Returns 1 - proxy accuracy (minimisation).
         """
         # Centred log-lr (optimum around -2.0)
         lr_term = (np.log10(hp["lr"]) + 2.0) ** 2
@@ -224,17 +243,32 @@ class ResNet18HPO:
 # P2 — 10-Bar Planar Truss Structural Design
 # ============================================================================
 
-# Standard benchmark: Schmit (1960), widely reproduced in the literature.
-# d = 10 cross-sectional areas A_i ∈ [0.1, 35.0] cm²
-# Objective: minimise total weight W = ρ Σ Aᵢ Lᵢ
-# Subject to:  |σᵢ| ≤ 25 kN/cm²   (stress)
-#              |δⱼ| ≤ 2.0 cm       (nodal displacement)
+# Standard benchmark: Schmit (1960), widely reproduced in the literature
+# (canonical 10-bar planar truss, cf. Lingyun et al. 2005).
+# d = 10 cross-sectional areas A_i — the paper (§4.2.2) quotes the range as
+#     [0.1, 35.0] in²  =  [0.645, 225.8] cm²;  the decision-variable numeric
+#     range is kept [0.1, 35.0] and is interpreted in in² (canonical benchmark).
+# Objective  : minimise total weight  W = ρ Σ Aᵢ Lᵢ          [kg]
+# Constraints: |σᵢ| ≤ 25 ksi = 172.37 MPa   (member stress)
+#              |δⱼ| ≤ 2.0 in  = 0.0508 m    (nodal displacement)
+#
+# UNITS — REVISED FOR FIDELITY: the manuscript reports W in kilograms and
+# quotes E = 10⁷ psi (68.95 GPa), ρ = 0.1 lb/in³ (2,767.99 kg/m³),
+# downward loads of 100 kips (444.82 kN) and limits of 25 ksi / 2.0 in.
+# The original implementation mixed kN/cm², kN/cm³ and a 100-kN load, so its
+# objective could not produce the paper's kg-scale results (2312 kg etc.).
+# This evaluator now works internally in SI (N, m, kg):
+#     E    = 68.95 GPa         (10⁷ psi)
+#     ρ    = 2,767.99 kg/m³   (0.1 lb/in³)
+#     P    = 444.82 kN         (100 kips)
+#     σ_max= 172.37 MPa        (25 ksi)
+#     δ_max= 0.0508 m          (2.0 in)
 
-P2_BOUNDS = np.array([[0.1, 35.0]] * 10)
+P2_BOUNDS = np.array([[0.1, 35.0]] * 10)   # A_i in in² (canonical benchmark)
 P2_BUDGET = 500
 
 # Geometry (m): 10 nodes, 10 bars, horizontal span L=9.144m, height H=9.144m
-_L = 9.144         # m → convert to cm: L_cm = _L * 100
+_L = 9.144         # m
 _H = 9.144         # m
 # Node coordinates (x, y) in metres
 _NODES = np.array([
@@ -251,17 +285,23 @@ _BARS = [
     (0, 3), (2, 5), (0, 1), (2, 3),   # diagonals
     (4, 5), (2, 1),                    # remaining
 ]
-_RHO  = 0.1    # density kN/cm³ (aluminium equivalent)
-_E    = 6.9e7  # Young's modulus kN/cm²
-_P    = 100.0  # external load kN (applied downward at nodes 1, 3)
+_RHO_SI = 2767.99          # kg/m³   (0.1 lb/in³, manuscript §4.2.2)
+_E_SI   = 68.95e9          # Pa      (68.95 GPa = 10⁷ psi)
+_P_SI   = 444.82e3         # N       (100 kips, downward at lower nodes 1 & 3)
+_SIGMA_MAX_SI = 172.37e6   # Pa      (25 ksi)
+_DISP_MAX_SI  = 0.0508     # m       (2.0 in)
+# in² → m² conversion for the decision variables
+IN2_TO_M2 = 6.4516e-4
 
 
 class TrussDesign:
     """
     P2: 10-bar planar truss weight minimisation.
 
-    evaluate(x) -> weight [kN]   subject to stress and displacement constraints.
-    Constraint violations are handled via exterior penalty.
+    evaluate(x) -> structural weight [kg]   subject to stress and
+    displacement constraints; constraint violations are handled via an
+    exterior penalty; the manuscript reports final designs as 100% feasible
+    (ϕ(x⋆) = 0).
     """
 
     bounds = P2_BOUNDS
@@ -269,35 +309,37 @@ class TrussDesign:
     d = 10
 
     def evaluate(self, x: np.ndarray) -> float:
-        A = np.clip(x, 0.1, 35.0)          # cm²
+        # x: A_i in in² (decision variables, canonical benchmark range)
+        #    → converted to m² for the SI FEM
+        A = np.clip(x, 0.1, 35.0) * IN2_TO_M2              # in² → m²
         return self._fem_objective(A)
 
     # ------------------------------------------------------------------
     @staticmethod
     def _fem_objective(A: np.ndarray) -> float:
         """
-        Simple 2D truss FEM.
-        Returns weight + penalty for constraint violations.
+        Simple 2D truss FEM in SI units (A in m², lengths in m,
+        E in Pa, load in N).  Returns weight [kg] + penalty for violations.
         """
         n_bars = 10
         n_nodes = 6
         dof = 2 * n_nodes   # 12 DOFs
 
-        # Bar lengths [cm]
+        # Bar lengths [m]
         L_bars = np.array([
-            np.linalg.norm(_NODES[b] - _NODES[a]) * 100.0
+            np.linalg.norm(_NODES[b] - _NODES[a])
             for a, b in _BARS
         ])
 
         # Global stiffness assembly
         K = np.zeros((dof, dof))
         for k, (a, b) in enumerate(_BARS):
-            xa, ya = _NODES[a] * 100.0
-            xb, yb = _NODES[b] * 100.0
+            xa, ya = _NODES[a]
+            xb, yb = _NODES[b]
             L = L_bars[k]
             c = (xb - xa) / L
             s = (yb - ya) / L
-            ke_local = (_E * A[k] / L) * np.array([
+            ke_local = (_E_SI * A[k] / L) * np.array([
                 [ c*c,  c*s, -c*c, -c*s],
                 [ c*s,  s*s, -c*s, -s*s],
                 [-c*c, -c*s,  c*c,  c*s],
@@ -310,8 +352,8 @@ class TrussDesign:
 
         # External load vector: -P (down) at nodes 1 and 3
         F = np.zeros(dof)
-        F[2*1 + 1] = -_P    # node 1, y-direction
-        F[2*3 + 1] = -_P    # node 3, y-direction
+        F[2*1 + 1] = -_P_SI    # node 1, y-direction
+        F[2*3 + 1] = -_P_SI    # node 3, y-direction
 
         # Boundary conditions: fix nodes 4 (x,y) and 5 (x,y)
         fixed_dofs = [2*4, 2*4+1, 2*5, 2*5+1]
@@ -329,30 +371,31 @@ class TrussDesign:
         for i, di in enumerate(free_dofs):
             u[di] = u_free[i]
 
-        # Bar stresses
+        # Bar stresses [Pa]
         stresses = np.zeros(n_bars)
         for k, (a, b) in enumerate(_BARS):
-            xa, ya = _NODES[a] * 100.0
-            xb, yb = _NODES[b] * 100.0
+            xa, ya = _NODES[a]
+            xb, yb = _NODES[b]
             L = L_bars[k]
             c = (xb - xa) / L
             s = (yb - ya) / L
             delta_u = (u[2*b] - u[2*a]) * c + (u[2*b+1] - u[2*a+1]) * s
-            stresses[k] = _E * delta_u / L
+            stresses[k] = _E_SI * delta_u / L
 
-        # Nodal displacements (magnitude)
+        # Nodal displacements (magnitude) [m]
         disps = np.array([
             np.sqrt(u[2*i] ** 2 + u[2*i + 1] ** 2) for i in range(n_nodes)
         ])
 
-        # Objective: total weight
-        weight = float(_RHO * np.sum(A * L_bars))
+        # Objective: total structural weight [kg]  (ρ · Σ Aᵢ·Lᵢ, SI)
+        weight = float(_RHO_SI * np.sum(A * L_bars))
 
-        # Penalty for constraint violations
-        sigma_max = 25.0   # kN/cm²
-        disp_max  = 2.0    # cm
-        pen_stress = np.sum(np.maximum(0.0, np.abs(stresses) - sigma_max) ** 2)
-        pen_disp   = np.sum(np.maximum(0.0, disps - disp_max) ** 2)
+        # Penalty for constraint violations — normalised by the allowed limits
+        # so that penalty magnitudes are dimensionless O(1) when violated.
+        pen_stress = np.sum(np.maximum(
+            0.0, np.abs(stresses) - _SIGMA_MAX_SI) ** 2) / _SIGMA_MAX_SI ** 2
+        pen_disp = np.sum(np.maximum(
+            0.0, disps - _DISP_MAX_SI) ** 2) / _DISP_MAX_SI ** 2
         penalty = 1e4 * (pen_stress + pen_disp)
 
         return weight + penalty
